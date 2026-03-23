@@ -46,6 +46,9 @@ Thumbs.db
 # Local MCP config (contains absolute paths)
 .mcp.json
 
+# MCP registry auth tokens
+.mcpregistry_*
+
 # Claude Code local settings
 .claude/
 
