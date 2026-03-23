@@ -1,5 +1,7 @@
 # tablestakes
 
+<!-- mcp-name: io.github.oborchers/tablestakes -->
+
 MCP server for reading and editing HTML/Markdown tables in GitBook-synced documents.
 
 ## Overview
