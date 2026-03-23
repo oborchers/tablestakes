@@ -24,17 +24,20 @@ def add_column(
     default_value: str = "",
     position: int = -1,
 ) -> str:
-    """Add a new column to a table.
+    """Add a new column. Requires version hash from read_table.
 
-    Returns new version hash (v:{hash}).
+    All existing rows are populated with default_value (empty string if omitted).
+
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
         name: Header text for the new column.
-        default_value: Value for all existing rows (default empty).
-        position: 0-based column index. -1 appends to the right.
+        default_value: Value for all existing rows (default: empty string).
+        position: 0-based column index for insertion. -1 appends to the right (default).
     """
 
     def apply(
@@ -72,15 +75,16 @@ def delete_column(
     version: str,
     column: str,
 ) -> str:
-    """Delete a column from a table.
+    """Delete a column. Requires version hash from read_table.
 
-    Returns new version hash (v:{hash}).
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
-        column: Column letter (A), name (Priority), or composite (B:Priority).
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
+        column: Column letter ("A"), name ("Priority"), or composite ("B:Priority").
     """
 
     def apply(
@@ -107,16 +111,17 @@ def rename_column(
     old_name: str,
     new_name: str,
 ) -> str:
-    """Rename a column header. Data in the column is unchanged.
+    """Rename a column header. Row data is unchanged. Requires version from read_table.
 
-    Returns updated column descriptors and new version.
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
-        old_name: Current column name (letter, name, or composite).
-        new_name: New header text.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
+        old_name: Current column identifier: letter ("A"), name, or composite ("B:Priority").
+        new_name: New header text for the column.
     """
 
     def apply(

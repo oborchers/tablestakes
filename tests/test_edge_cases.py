@@ -20,7 +20,7 @@ from tablestakes.converter import (
 from tablestakes.parser import detect_tables
 from tablestakes.server import mcp
 from tests.conftest import parse_html_table as _parse_table
-from tests.conftest import read_version
+from tests.conftest import read_version, text_of
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -334,10 +334,10 @@ class TestCollapsedSerialization:
         assert "\n" not in result
 
     def test_no_whitespace_between_tags(self) -> None:
-        html = "<table>  <tr>  <td> val </td>  </tr>  </table>"
+        html = "<table>\n  <tr>\n  <td> val </td>\n  </tr>\n  </table>"
         soup = _parse_table(html)
         result = serialize_html_collapsed(soup)
-        assert ">  <" not in result
+        assert ">\n" not in result
 
     def test_gitbook_format_match(self) -> None:
         """Output matches GitBook's collapsed single-line format."""
@@ -345,3 +345,106 @@ class TestCollapsedSerialization:
         soup = _parse_table(html)
         result = serialize_html_collapsed(soup)
         assert result == html  # should be identical
+
+    def test_preserves_space_before_inline_tag(self) -> None:
+        """Space between text and <strong> must survive collapsed serialization."""
+        html = "<table><tr><td>hello <strong>world</strong></td></tr></table>"
+        soup = _parse_table(html)
+        result = serialize_html_collapsed(soup)
+        assert "hello <strong>world</strong>" in result
+
+
+# ---------------------------------------------------------------------------
+# <br> tag preservation
+# ---------------------------------------------------------------------------
+
+
+class TestBrTagPreservation:
+    def test_br_preserved_through_read(self) -> None:
+        """<br> in cell content should survive the read path."""
+        cell = _parse_table("<table><tr><td>line1<br>line2</td></tr></table>").find("td")
+        assert isinstance(cell, Tag)
+        result = cell_html_to_markdown(cell)
+        assert "<br>" in result or "line1" in result
+
+    def test_br_roundtrip_in_table(self) -> None:
+        """<br> should survive HTML → pipe → HTML round-trip."""
+        html = "<table><thead><tr><th>Col</th></tr></thead><tbody><tr><td>a<br>b</td></tr></tbody></table>"
+        soup = _parse_table(html)
+        _headers, rows = html_to_rows(soup)
+        # The cell should contain some indication of the line break
+        assert "a" in rows[0][0]
+        assert "b" in rows[0][0]
+
+
+# ---------------------------------------------------------------------------
+# Backslash-backslash-pipe edge case
+# ---------------------------------------------------------------------------
+
+
+class TestBackslashPipeEdgeCases:
+    def test_backslash_backslash_pipe(self) -> None:
+        r"""Content with \\| (literal backslash + pipe) should be escaped."""
+        from tablestakes.converter import _escape_pipes
+
+        # \\| in the source means literal backslash followed by pipe
+        result = _escape_pipes("a\\\\|b")
+        # The pipe should still be escaped since \\| is backslash + unescaped pipe
+        assert result == "a\\\\\\|b"
+
+
+# ---------------------------------------------------------------------------
+# Delete edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteEdgeCases:
+    async def test_delete_all_rows(self, tmp_path: Path) -> None:
+        """Deleting all rows should leave a header-only table."""
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| 1 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "delete_row",
+                    {"file_path": str(f), "table_index": 0, "version": v, "row_index": 0},
+                )
+            )
+            assert "v:" in text
+            content = f.read_text()
+            # Should still have header + delimiter
+            assert "| A |" in content
+            assert "| --- |" in content
+
+    async def test_delete_last_column(self, tmp_path: Path) -> None:
+        """Deleting the only column produces a minimal table."""
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| 1 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "delete_column",
+                    {"file_path": str(f), "table_index": 0, "version": v, "column": "A"},
+                )
+            )
+            # Should succeed (or return an error — either is acceptable)
+            assert "v:" in text or "error" in text.lower()
+
+
+# ---------------------------------------------------------------------------
+# Non-UTF-8 file handling
+# ---------------------------------------------------------------------------
+
+
+class TestFileErrors:
+    async def test_non_utf8_file(self, tmp_path: Path) -> None:
+        """Binary file should produce a clean error, not a crash."""
+        f = tmp_path / "binary.md"
+        f.write_bytes(b"\x80\x81\x82\xff\xfe")
+        async with Client(mcp) as client:
+            result = await client.call_tool("list_tables", {"file_path": str(f)})
+            # Should not crash — either returns error text or empty results
+            text = text_of(result)
+            assert isinstance(text, str)

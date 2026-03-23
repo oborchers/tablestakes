@@ -7,6 +7,8 @@ safety model: re-read file, re-detect tables, verify content hash, then apply.
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import TypeAlias
@@ -29,6 +31,18 @@ EditFn: TypeAlias = Callable[
 ]
 
 
+def _atomic_write(path: Path, content: str) -> None:
+    """Write content to file atomically via temp file + rename."""
+    tmp_fd, tmp_path = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        Path(tmp_path).replace(path)
+    except BaseException:
+        Path(tmp_path).unlink()
+        raise
+
+
 def _safe_write(
     file_path: str,
     table_index: int,
@@ -42,7 +56,7 @@ def _safe_write(
     3. Find table at requested index
     4. Compute current content hash
     5. Compare against client-provided version
-    6. If match: parse → edit → serialize → replace → write
+    6. If match: parse → edit → serialize → replace → atomic write
     7. If mismatch: return STALE_READ error
 
     Returns: `v:{new_hash}` on success, JSON error on failure.
@@ -86,9 +100,9 @@ def _safe_write(
     # Serialize back to original format
     new_raw = _serialize_table(table, new_headers, new_rows)
 
-    # Replace in file and write
+    # Replace in file and write atomically
     new_content = content[: table.start_offset] + new_raw + content[table.end_offset :]
-    path.write_text(new_content, encoding="utf-8")
+    _atomic_write(path, new_content)
 
     return f"v:{compute_hash(new_raw)}"
 
@@ -132,19 +146,21 @@ def update_cells(
     version: str,
     updates: list[dict[str, str | int]],
 ) -> str:
-    """Batch update cells in a table.
+    """Batch-update cells. Requires version hash from read_table.
 
     Each update is {row, column, value} where:
-    - row: 0-based data row index
-    - column: column letter (A), name (Priority), or composite (B:Priority)
-    - value: new cell content (Markdown formatting supported)
+    - row: 0-based data row index (header row is NOT counted)
+    - column: letter ("A"), name ("Priority"), or composite ("B:Priority")
+    - value: new cell content (Markdown inline formatting supported)
 
-    Requires version hash from read_table. Returns new version hash.
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON: {"error": "STALE_READ"|"EDIT_ERROR"|..., "message": "..."}.
+    If STALE_READ: call read_table again for current version, then retry.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:", e.g. "a1b2c3d4e5f6").
         updates: List of {row: int, column: str, value: str} dicts.
     """
 
@@ -160,7 +176,7 @@ def update_cells(
             value = str(update["value"])
 
             if row_idx < 0 or row_idx >= len(rows):
-                msg = f"Row {row_idx} out of range (0-{len(rows) - 1})"
+                msg = f"Row {row_idx} out of range (0-{max(0, len(rows) - 1)})"
                 raise ValueError(msg)
 
             col_idx = resolve_column(col_ref, columns)
@@ -184,16 +200,22 @@ def insert_row(
     position: int,
     values: dict[str, str],
 ) -> str:
-    """Insert a new row into a table.
+    """Insert a new row. Requires version hash from read_table.
 
-    Returns new version hash (v:{hash}).
+    Provide values as a dict mapping column identifiers to cell content.
+    Column identifiers: letter ("A"), name ("Priority"), or composite ("B:Priority").
+    Omitted columns default to empty string.
+
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
-        position: 0-based index where row is inserted. Use -1 to append.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
+        position: 0-based row index for insertion. Use -1 to append at the end.
         values: Dict mapping column identifiers to cell values.
+            Example: {"Name": "Alice", "B": "30", "C:City": "NYC"}
     """
 
     def apply(
@@ -227,15 +249,16 @@ def delete_row(
     version: str,
     row_index: int,
 ) -> str:
-    """Delete a row from a table.
+    """Delete a row. Requires version hash from read_table.
 
-    Returns new version hash (v:{hash}).
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
-        row_index: 0-based data row index to delete.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
+        row_index: 0-based data row index to delete (header row is NOT counted).
     """
 
     def apply(
@@ -245,7 +268,7 @@ def delete_row(
         columns: list[ColumnDescriptor],
     ) -> tuple[list[str], list[list[str]]]:
         if row_index < 0 or row_index >= len(rows):
-            msg = f"Row {row_index} out of range (0-{len(rows) - 1})"
+            msg = f"Row {row_index} out of range (0-{max(0, len(rows) - 1)})"
             raise ValueError(msg)
         rows.pop(row_index)
         return headers, rows
@@ -260,18 +283,20 @@ def replace_table(
     version: str,
     new_content: str,
 ) -> str:
-    """Replace an entire table with new content.
+    """Replace an entire table with new content. Requires version from read_table.
 
-    Accepts a pipe table string. Writes back in the ORIGINAL format:
-    pipe stays pipe, GitBook HTML stays GitBook HTML (with cached attributes).
+    Provide new_content as a pipe table string (header row + delimiter + data rows).
+    The server writes back in the ORIGINAL file format: pipe stays pipe,
+    GitBook HTML stays GitBook HTML (attributes preserved).
 
-    Returns new version hash (v:{hash}).
+    On success returns ONLY `v:{new_hash}`.
+    On error returns JSON with "error" and "message" fields.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index.
-        version: Version hash from read_table.
-        new_content: New table content as a pipe table string.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables.
+        version: 12-char hex hash from read_table (after "v:").
+        new_content: Full pipe table string including header and delimiter rows.
     """
 
     def apply(

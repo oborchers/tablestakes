@@ -66,9 +66,9 @@ def cell_html_to_markdown(cell: Tag) -> str:
     if not inner_html.strip():
         return ""
 
-    result = md(inner_html, strip=["br"]).strip()
-    # markdownify sometimes adds trailing newlines
-    result = result.replace("\n", " ")
+    result = md(inner_html).strip()
+    # Convert newlines (from <br> or markdownify output) to literal <br> for pipe tables
+    result = result.replace("\n", "<br>")
     # Escape pipes for GFM pipe tables
     result = _escape_pipes(result)
     return result
@@ -76,8 +76,8 @@ def cell_html_to_markdown(cell: Tag) -> str:
 
 def _escape_pipes(text: str) -> str:
     """Escape literal pipe characters for use in GFM pipe table cells."""
-    # Replace unescaped pipes (not already preceded by backslash)
-    return re.sub(r"(?<!\\)\|", r"\\|", text)
+    # Match pipe NOT preceded by an odd number of backslashes
+    return re.sub(r"(?<!\\)((?:\\\\)*)\|", r"\1\\|", text)
 
 
 def _unescape_pipes(text: str) -> str:
@@ -339,8 +339,9 @@ def serialize_html_collapsed(soup: Tag) -> str:
     Matches GitBook's format: no indentation, no extra whitespace between tags.
     """
     raw = str(soup)
-    # Collapse whitespace between tags
-    raw = re.sub(r">\s+<", "><", raw)
+    # Collapse formatting whitespace (contains newlines) between tags
+    # Preserves single spaces in content like "hello <strong>world</strong>"
+    raw = re.sub(r">\n\s*<", "><", raw)
     # Remove leading/trailing whitespace
     return raw.strip()
 

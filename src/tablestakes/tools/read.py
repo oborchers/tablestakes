@@ -18,20 +18,28 @@ from tablestakes.server import mcp
 
 @mcp.tool(output_schema=None)
 def list_tables(file_path: str, preview_rows: int = 1) -> str:
-    """Scan a Markdown file and list all tables with metadata and preview.
+    """List all tables in a Markdown file. Call this FIRST to discover tables.
 
-    Returns a compact index: table index, format, dimensions, version hash,
-    section heading, column descriptors, and preview row(s).
+    Output format per table:
+      T{index} {format} {rows}r {cols}c v:{hash} [{section heading}]
+      {column descriptors as A:Name | B:Age | ...}
+      row0: {first row cell values}
+
+    Use table_index (the number after T) with read_table and write tools.
 
     Args:
-        file_path: Path to the Markdown file.
+        file_path: Absolute path to the Markdown file.
         preview_rows: Number of data rows to preview (default 1, 0 for none).
     """
     path = Path(file_path)
     if not path.exists():
         return f"File not found: {file_path}"
 
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as e:
+        return f"Cannot read file: {e}"
+
     tables = detect_tables(content)
 
     if not tables:
@@ -72,22 +80,29 @@ def list_tables(file_path: str, preview_rows: int = 1) -> str:
 
 @mcp.tool(output_schema=None)
 def read_table(file_path: str, table_index: int) -> str:
-    """Read a full table from a Markdown file in normalized format.
+    """Read a full table and get the version hash required for writes.
 
-    Returns version hash, metadata, column descriptors, and full table
-    as a compact pipe table (simple/gitbook) or pretty HTML (complex).
+    Workflow: list_tables → read_table → write tool (update_cells, etc.)
 
-    The version hash (v:...) is required for all write operations.
+    First line of output is metadata: v:{hash} {format} {rows}r {cols}c [{section}]
+    Extract the 12-char hex hash after "v:" (e.g. "a1b2c3d4e5f6") and pass it
+    as the version argument to any write tool.
+
+    If a write returns STALE_READ, call read_table again for a fresh version.
 
     Args:
-        file_path: Path to the Markdown file.
-        table_index: 0-based table index from list_tables.
+        file_path: Absolute path to the Markdown file.
+        table_index: 0-based table index from list_tables (the number after T).
     """
     path = Path(file_path)
     if not path.exists():
         return f"File not found: {file_path}"
 
-    content = path.read_text(encoding="utf-8")
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, OSError) as e:
+        return f"Cannot read file: {e}"
+
     tables = detect_tables(content)
 
     if table_index < 0 or table_index >= len(tables):

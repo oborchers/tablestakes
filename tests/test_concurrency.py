@@ -178,3 +178,73 @@ class TestTwoAgentsDifferentTables:
             content = two_tables_md.read_text()
             assert "edited0" in content
             assert "edited1" in content
+
+
+class TestTextEditThenTableEdit:
+    """Scenario: Agent A edits prose text, then Agent B edits a table.
+
+    This is common when one agent works on documentation text while another
+    edits requirement tables. The table write must preserve A's text changes.
+    """
+
+    async def test_text_edit_before_table_edit_preserved(self, two_tables_md: Path) -> None:
+        """Agent A edits prose between tables, then Agent B edits table 0.
+
+        Agent B's table write should preserve Agent A's text changes because
+        _safe_write re-reads the file fresh before writing.
+        """
+        async with Client(mcp) as client:
+            # Agent B reads the table (gets version)
+            v0 = await read_version(client, str(two_tables_md), 0)
+
+            # Agent A edits prose text between the tables (outside tablestakes)
+            content = two_tables_md.read_text()
+            two_tables_md.write_text(
+                content.replace("Some text between.", "Agent A rewrote this paragraph.")
+            )
+
+            # Agent B writes to table 0 — should succeed AND preserve A's text
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(two_tables_md),
+                        "table_index": 0,
+                        "version": v0,
+                        "updates": [{"row": 0, "column": "A", "value": "AgentB"}],
+                    },
+                )
+            )
+            assert "v:" in text  # write succeeded
+
+            # Verify BOTH changes are in the file
+            final = two_tables_md.read_text()
+            assert "Agent A rewrote this paragraph." in final  # A's text preserved
+            assert "AgentB" in final  # B's table edit applied
+
+    async def test_text_edit_after_table_also_preserved(self, two_tables_md: Path) -> None:
+        """Agent A edits prose AFTER the tables, then Agent B edits table 1."""
+        async with Client(mcp) as client:
+            v1 = await read_version(client, str(two_tables_md), 1)
+
+            # Agent A appends text at the end
+            content = two_tables_md.read_text()
+            two_tables_md.write_text(content + "\nAgent A added this footer.\n")
+
+            # Agent B edits table 1
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(two_tables_md),
+                        "table_index": 1,
+                        "version": v1,
+                        "updates": [{"row": 0, "column": "X", "value": "AgentB"}],
+                    },
+                )
+            )
+            assert "v:" in text
+
+            final = two_tables_md.read_text()
+            assert "Agent A added this footer." in final
+            assert "AgentB" in final

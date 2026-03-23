@@ -58,18 +58,19 @@ v:5749c94ffb1f
 
 ## Token Efficiency
 
-Output is optimized for LLM context windows. Measured against a real 26-table GitBook PRD:
+Output is optimized for LLM context windows. Measured against a real 26-table document:
 
-| Operation | Output size |
-|---|---|
-| `list_tables` (26 tables) | ~2,600 tokens |
-| `read_table` (18-row table) | ~1,500 tokens |
-| Any write operation | ~4 tokens |
-| **10-edit workflow** | **~1,550 tokens total** |
+| Operation | Naive approach | tablestakes | Savings |
+|---|---|---|---|
+| `list_tables` (26 tables) | ~4,900 tokens | ~2,600 tokens | **45%** |
+| `read_table` (18-row table) | ~1,500 tokens | ~1,500 tokens | — |
+| Any write operation | ~1,500 tokens | ~4 tokens | **99.8%** |
+| **10-edit workflow** | **~16,500 tokens** | **~1,550 tokens** | **91%** |
 
-Write tools return only the new version hash (`v:{hash}`). No full table echo — the LLM already has the table from `read_table`. This cuts a 10-edit workflow from ~16,500 tokens (if tables were echoed) to ~1,550 tokens.
-
-Pipe tables use compact formatting (no column padding). Per the [ImprovingAgents benchmark](https://improvingagents.com), GFM pipe tables achieve the best token-to-accuracy ratio: 1.24x CSV tokens at 51.9% QA accuracy, beating JSON (2.08x, 52.3%) and YAML (1.88x, 54.7%).
+Key optimizations:
+- **Write tools return only `v:{hash}`** (4 tokens) instead of echoing the full table (~1,500 tokens). The LLM already has the table from `read_table`.
+- **Compact pipe tables** with no column padding. Per the [ImprovingAgents benchmark](https://improvingagents.com), GFM pipe tables achieve the best token-to-accuracy ratio: 1.24x CSV cost at 51.9% QA accuracy, beating JSON (2.08x, 52.3%) and YAML (1.88x, 54.7%).
+- **No `structuredContent` duplication** — `output_schema=None` on all tools prevents FastMCP from sending the response twice.
 
 ## Quick Start
 

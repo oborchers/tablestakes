@@ -4,15 +4,15 @@
 
 | Integration                                                         | Source                       | Requirements       |
 | ------------------------------------------------------------------- | ---------------------------- | ------------------ |
-| **Template response source** (matched template, pre-filled content) | Batch pipeline → Supabase    | 6.5, 6.6, 6.7, 7.7 |
-| **AI response source** (proactive draft)                            | Batch pipeline → Supabase    | 4.2, 7.2           |
+| **Template response source** (matched template, pre-filled content) | Batch pipeline → Database    | 6.5, 6.6, 6.7, 7.7 |
+| **AI response source** (proactive draft)                            | Batch pipeline → Database    | 4.2, 7.2           |
 | **On-demand AI generation** (interactive mode)                      | Streaming pipeline (FastAPI) | 1.6                |
 
 Some text between tables.
 
 ### Attachments
 
-<table><thead><tr><th width="395.0811767578125">Requirement</th><th>Priority</th><th>Dependency</th><th>Priority 1-2-3</th></tr></thead><tbody><tr><td><strong>5.1</strong> View inbound attachments in-app. PDF and image files render in-app preview; other file types offer download. <em>(Feeds G9 — attachments are a top-3 reason agents visit SF)</em></td><td>Must</td><td>—</td><td>1</td></tr><tr><td><strong>5.2</strong> Send outbound attachments as real email attachments (not public URL workaround).</td><td>Must</td><td>Blocked on SF email mutation API enhancement</td><td>1</td></tr><tr><td><strong>5.3</strong> Attachment file size and count limits are enforced with clear feedback to the agent</td><td>Should</td><td>—</td><td></td></tr></tbody></table>
+<table><thead><tr><th width="395.0811767578125">Requirement</th><th>Priority</th><th>Dependency</th><th>Priority 1-2-3</th></tr></thead><tbody><tr><td><strong>5.1</strong> View inbound attachments in-app. PDF and image files render in-app preview; other file types offer download. <em>(Feeds goal G9)</em></td><td>Must</td><td>—</td><td>1</td></tr><tr><td><strong>5.2</strong> Send outbound attachments as real email attachments (not URL workaround).</td><td>Must</td><td>Blocked on email API enhancement</td><td>1</td></tr><tr><td><strong>5.3</strong> Attachment file size and count limits are enforced with clear feedback to the user</td><td>Should</td><td>—</td><td></td></tr></tbody></table>
 
 ### Notifications
 
