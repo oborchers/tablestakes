@@ -2,13 +2,12 @@ name: Release
 on:
   release:
     types: [published]
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
-    permissions:
-      contents: read
 
   publish:
     needs: ci
