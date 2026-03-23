@@ -43,5 +43,14 @@ Thumbs.db
 # uv
 .python-version
 
+# Local MCP config (contains absolute paths)
+.mcp.json
+
+# Claude Code local settings
+.claude/
+
+# IDE workspaces
+*.code-workspace
+
 # Research docs (not shipped)
 .research/

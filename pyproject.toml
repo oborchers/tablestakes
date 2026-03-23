@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tablestakes"
+dynamic = ["version"]
+description = "MCP server for reading and editing HTML/Markdown tables in GitBook-synced documents"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Oliver Borchers" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3 :: Only",
+    "Operating System :: OS Independent",
+    "Typing :: Typed",
+]
+dependencies = [
+    "fastmcp>=3.0",
+    "beautifulsoup4>=4.12",
+    "markdownify>=0.14",
+]
+
+[project.scripts]
+tablestakes = "tablestakes.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/oborchers/tablestakes"
+Changelog = "https://github.com/oborchers/tablestakes/blob/main/CHANGELOG.md"
+"Bug Tracker" = "https://github.com/oborchers/tablestakes/issues"
+
+[dependency-groups]
+test = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=6.0",
+    "pytest-timeout>=2.3",
+    "pytest-xdist>=3.5",
+    "coverage[toml]>=7.6",
+    "inline-snapshot>=0.7",
+]
+lint = [
+    "ruff>=0.9",
+    "mypy>=1.14",
+]
+dev = [{ include-group = "test" }, { include-group = "lint" }, "pre-commit>=4.0"]
+
+[tool.hatch.version]
+source = "vcs"
+
+[tool.hatch.build.hooks.vcs]
+version-file = "src/tablestakes/_version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tablestakes"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+xfail_strict = true
+filterwarnings = [
+    "error",
+    # Add exemptions for third-party deprecation warnings as needed:
+    # "ignore::DeprecationWarning:pydantic",
+]
+addopts = ["--strict-markers", "--strict-config", "-ra"]
+asyncio_mode = "auto"
+timeout = 10
+markers = [
+    "integration: marks integration tests requiring external resources",
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+enable_error_code = ["ignore-without-code", "redundant-cast", "truthy-bool"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+src = ["src"]
+extend-exclude = ["src/tablestakes/_version.py"]
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "N", "UP", "B", "SIM", "C4", "RUF", "PERF", "TCH", "C90", "S", "PTH", "ERA", "T20", "PT"]
+ignore = ["E501", "ERA001"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "PLR2004", "S603", "S607"]
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["tablestakes"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.coverage.run]
+source_pkgs = ["tablestakes"]
+branch = true
+parallel = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 85
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "@overload",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]

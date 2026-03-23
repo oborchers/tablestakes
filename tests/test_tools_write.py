@@ -1,0 +1,298 @@
+"""Tests for write MCP tools via FastMCP in-memory Client."""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+import pytest
+from fastmcp import Client
+
+from tablestakes.server import mcp
+from tests.conftest import read_version, text_of, version_of
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+@pytest.fixture
+def pipe_md(tmp_path: Path) -> Path:
+    f = tmp_path / "test.md"
+    f.write_text(
+        "# Test\n\n"
+        "| Name | Age | City |\n"
+        "| --- | --- | --- |\n"
+        "| Alice | 30 | NYC |\n"
+        "| Bob | 25 | LA |\n"
+        "| Carol | 35 | SF |\n"
+        "\nEnd.\n"
+    )
+    return f
+
+
+class TestUpdateCells:
+    async def test_update_single_cell(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "updates": [{"row": 0, "column": "Age", "value": "31"}],
+                    },
+                )
+            )
+            assert "v:" in text
+            assert "31" in pipe_md.read_text()
+
+    async def test_update_batch(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(pipe_md),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [
+                        {"row": 0, "column": "A", "value": "Alicia"},
+                        {"row": 1, "column": "City", "value": "Boston"},
+                    ],
+                },
+            )
+            content = pipe_md.read_text()
+            assert "Alicia" in content
+            assert "Boston" in content
+
+    async def test_update_by_composite(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(pipe_md),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 2, "column": "C:City", "value": "Denver"}],
+                },
+            )
+            assert "Denver" in pipe_md.read_text()
+
+    async def test_stale_read(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": "wrong_version",
+                        "updates": [{"row": 0, "column": "Name", "value": "X"}],
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "STALE_READ"
+
+    async def test_row_out_of_range(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "updates": [{"row": 99, "column": "Name", "value": "X"}],
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "EDIT_ERROR"
+
+    async def test_column_not_found(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "updates": [{"row": 0, "column": "Nonexistent", "value": "X"}],
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "EDIT_ERROR"
+
+    async def test_version_changes(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v1 = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v1,
+                        "updates": [{"row": 0, "column": "Name", "value": "NewName"}],
+                    },
+                )
+            )
+            assert version_of(text) != v1
+
+    async def test_gitbook_attrs_preserved(self, gitbook_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(gitbook_md))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(gitbook_md),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "B", "value": "Should"}],
+                },
+            )
+            content = gitbook_md.read_text()
+            assert 'width="395.0811767578125"' in content
+            assert "Should" in content
+
+
+class TestInsertRow:
+    async def test_append_row(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "insert_row",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "position": -1,
+                        "values": {"Name": "Dave", "Age": "40", "City": "Chicago"},
+                    },
+                )
+            )
+            assert "v:" in text
+            assert "Dave" in pipe_md.read_text()
+
+    async def test_insert_at_position(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            await client.call_tool(
+                "insert_row",
+                {
+                    "file_path": str(pipe_md),
+                    "table_index": 0,
+                    "version": v,
+                    "position": 1,
+                    "values": {"Name": "Eve"},
+                },
+            )
+            content = pipe_md.read_text()
+            assert content.index("Alice") < content.index("Eve") < content.index("Bob")
+
+    async def test_returns_version_only(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "insert_row",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "position": -1,
+                        "values": {"Name": "X"},
+                    },
+                )
+            )
+            assert text.startswith("v:")
+            assert "| ---" not in text
+
+
+class TestDeleteRow:
+    async def test_delete_row(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            await client.call_tool(
+                "delete_row",
+                {
+                    "file_path": str(pipe_md),
+                    "table_index": 0,
+                    "version": v,
+                    "row_index": 1,
+                },
+            )
+            content = pipe_md.read_text()
+            assert "Bob" not in content
+            assert "Alice" in content
+            assert "Carol" in content
+
+    async def test_delete_out_of_range(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "delete_row",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "row_index": 99,
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "EDIT_ERROR"
+
+
+class TestReplaceTable:
+    async def test_replace_pipe(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            text = text_of(
+                await client.call_tool(
+                    "replace_table",
+                    {
+                        "file_path": str(pipe_md),
+                        "table_index": 0,
+                        "version": v,
+                        "new_content": "| X | Y |\n| --- | --- |\n| 1 | 2 |",
+                    },
+                )
+            )
+            assert "v:" in text
+            content = pipe_md.read_text()
+            assert "Alice" not in content
+            assert "X" in content
+
+    async def test_replace_gitbook_preserves_format(self, gitbook_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(gitbook_md))
+            await client.call_tool(
+                "replace_table",
+                {
+                    "file_path": str(gitbook_md),
+                    "table_index": 0,
+                    "version": v,
+                    "new_content": "| Req | Pri | Dep | P123 |\n| --- | --- | --- | --- |\n| New | Must | None | 1 |",
+                },
+            )
+            content = gitbook_md.read_text()
+            assert "<table>" in content
+            assert "New" in content
+
+
+class TestToolRegistration:
+    async def test_write_tools_registered(self) -> None:
+        async with Client(mcp) as client:
+            tools = await client.list_tools()
+            names = [t.name for t in tools]
+            assert "update_cells" in names
+            assert "insert_row" in names
+            assert "delete_row" in names
+            assert "replace_table" in names
