@@ -143,6 +143,159 @@ class TestReadTable:
             assert "**5.1**" in text
 
 
+class TestSearchTables:
+    async def test_search_all_tables(self, mixed_md: Path) -> None:
+        """Search across all tables with table_index=-1."""
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables", {"file_path": str(mixed_md), "pattern": "Must"}
+                )
+            )
+            assert "match" in text
+            assert "Must" in text
+
+    async def test_search_single_table(self, mixed_md: Path) -> None:
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(mixed_md), "pattern": "Alice", "table_index": 3},
+                )
+            )
+            assert "1 match" in text
+            assert "T3" in text
+
+    async def test_search_with_column_filter(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Name | Status |\n| --- | --- |\n| Alice | Done |\n| Bob | Pending |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(f), "pattern": "Done", "column": "Status"},
+                )
+            )
+            assert "1 match" in text
+            assert "Alice" in text
+
+    async def test_case_insensitive(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Name |\n| --- |\n| Alice |\n| BOB |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool("search_tables", {"file_path": str(f), "pattern": "bob"})
+            )
+            assert "1 match" in text
+            assert "BOB" in text
+
+    async def test_no_matches(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Name |\n| --- |\n| Alice |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables", {"file_path": str(f), "pattern": "Nonexistent"}
+                )
+            )
+            assert "No matches" in text
+
+    async def test_regex_match(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "| Req | Status |\n| --- | --- |\n"
+            "| D 1.1 | Done |\n| D 1.2 | Pending |\n| D 2.1 | Done |\n"
+        )
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(f), "regex": r"D 1\.\d+"},
+                )
+            )
+            assert "2 match" in text
+            assert "D 1.1" in text
+            assert "D 1.2" in text
+            assert "D 2.1" not in text
+
+    async def test_invalid_regex(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| 1 |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool("search_tables", {"file_path": str(f), "regex": "[invalid"})
+            )
+            assert "INVALID_REGEX" in text
+
+    async def test_empty_pattern_returns_all(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| 1 |\n| 2 |\n| 3 |\n")
+        async with Client(mcp) as client:
+            text = text_of(await client.call_tool("search_tables", {"file_path": str(f)}))
+            assert "3 match" in text
+
+    async def test_file_not_found(self) -> None:
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables", {"file_path": "/nonexistent.md", "pattern": "x"}
+                )
+            )
+            assert "not found" in text.lower()
+
+    async def test_invalid_table_index(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| 1 |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(f), "pattern": "1", "table_index": 99},
+                )
+            )
+            assert "TABLE_NOT_FOUND" in text
+
+    async def test_includes_version_hash(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| A |\n| --- |\n| hello |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool("search_tables", {"file_path": str(f), "pattern": "hello"})
+            )
+            assert "v:" in text
+
+    async def test_search_column_skips_tables_without_it(self, tmp_path: Path) -> None:
+        """Bug K: searching all tables by column name must skip tables that lack it."""
+        f = tmp_path / "test.md"
+        f.write_text(
+            "| Name | Age |\n| --- | --- |\n| Alice | 30 |\n\n"
+            "| Title | Status |\n| --- | --- |\n| Report | Done |\n"
+        )
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(f), "pattern": "30", "column": "Age"},
+                )
+            )
+            assert "1 match" in text
+            assert "Alice" in text
+            assert "COLUMN_NOT_FOUND" not in text
+
+    async def test_search_column_error_on_single_table(self, tmp_path: Path) -> None:
+        """Explicit table_index with missing column should still error."""
+        f = tmp_path / "test.md"
+        f.write_text("| Name |\n| --- |\n| Alice |\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "search_tables",
+                    {"file_path": str(f), "pattern": "x", "table_index": 0, "column": "Age"},
+                )
+            )
+            assert "COLUMN_NOT_FOUND" in text
+
+
 class TestToolRegistration:
     async def test_tools_are_registered(self) -> None:
         async with Client(mcp) as client:
@@ -150,3 +303,4 @@ class TestToolRegistration:
             names = [t.name for t in tools]
             assert "list_tables" in names
             assert "read_table" in names
+            assert "search_tables" in names

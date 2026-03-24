@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-03-24
+
+### Added
+
+- `search_tables` tool: search for rows matching a substring or regex across one or all tables in a file, with optional column filter
+- Server instructions rewritten for better LLM tool adoption (search-forward language, disambiguation from grep/Read)
+- Updated `list_tables` and `read_table` descriptions to explain when to prefer them over built-in file tools
+
+### Fixed
+
+- Searching all tables by column name no longer errors on tables that lack that column (Bug K)
+
 ## [1.0.0] - 2026-03-24
 
 ### Added
