@@ -1,4 +1,4 @@
-"""Write MCP tools: update_cells, insert_row, delete_row, replace_table.
+"""Write MCP tools: update_cells, insert_row, delete_row, replace_table, create_table.
 
 All write operations use _safe_write which implements the shifted-lines
 safety model: re-read file, re-detect tables, verify content hash, then apply.
@@ -11,7 +11,9 @@ import os
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
-from typing import TypeAlias
+from typing import Annotated, Literal, TypeAlias
+
+from pydantic import Field
 
 from tablestakes.converter import (
     html_to_rows,
@@ -21,7 +23,7 @@ from tablestakes.converter import (
     rows_to_pipe_table,
 )
 from tablestakes.hasher import compute_hash
-from tablestakes.models import ColumnDescriptor, RawTable, TableFormat
+from tablestakes.models import CellUpdate, ColumnDescriptor, RawTable, TableFormat
 from tablestakes.parser import detect_tables
 from tablestakes.server import mcp
 
@@ -68,7 +70,7 @@ def _safe_write(
     content = path.read_text(encoding="utf-8")
     tables = detect_tables(content)
 
-    if table_index < 0 or table_index >= len(tables):
+    if table_index >= len(tables):
         return _error(
             "TABLE_NOT_FOUND",
             f"Index {table_index} out of range. File has {len(tables)} table(s).",
@@ -142,9 +144,9 @@ def _error(error_type: str, message: str, **extra: str) -> str:
 @mcp.tool(output_schema=None)
 def update_cells(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
-    updates: list[dict[str, str | int]],
+    updates: list[CellUpdate],
 ) -> str:
     """Batch-update cells. Requires version hash from read_table.
 
@@ -161,7 +163,7 @@ def update_cells(
         file_path: Absolute path to the Markdown file.
         table_index: 0-based table index from list_tables.
         version: 12-char hex hash from read_table (after "v:", e.g. "a1b2c3d4e5f6").
-        updates: List of {row: int, column: str, value: str} dicts.
+        updates: List of {row: int, column: str, value: str} objects.
     """
 
     def apply(
@@ -171,21 +173,17 @@ def update_cells(
         columns: list[ColumnDescriptor],
     ) -> tuple[list[str], list[list[str]]]:
         for update in updates:
-            row_idx = int(update["row"])
-            col_ref = str(update["column"])
-            value = str(update["value"])
-
-            if row_idx < 0 or row_idx >= len(rows):
-                msg = f"Row {row_idx} out of range (0-{max(0, len(rows) - 1)})"
+            if update.row >= len(rows):
+                msg = f"Row {update.row} out of range (0-{max(0, len(rows) - 1)})"
                 raise ValueError(msg)
 
-            col_idx = resolve_column(col_ref, columns)
+            col_idx = resolve_column(update.column, columns)
 
             # Pad row if needed
-            while len(rows[row_idx]) <= col_idx:
-                rows[row_idx].append("")
+            while len(rows[update.row]) <= col_idx:
+                rows[update.row].append("")
 
-            rows[row_idx][col_idx] = value
+            rows[update.row][col_idx] = update.value
 
         return headers, rows
 
@@ -195,9 +193,9 @@ def update_cells(
 @mcp.tool(output_schema=None)
 def insert_row(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
-    position: int,
+    position: Annotated[int, Field(ge=-1)],
     values: dict[str, str],
 ) -> str:
     """Insert a new row. Requires version hash from read_table.
@@ -231,9 +229,6 @@ def insert_row(
 
         if position == -1 or position >= len(rows):
             rows.append(new_row)
-        elif position < 0:
-            msg = f"Position {position} invalid. Use -1 to append."
-            raise ValueError(msg)
         else:
             rows.insert(position, new_row)
 
@@ -245,9 +240,9 @@ def insert_row(
 @mcp.tool(output_schema=None)
 def delete_row(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
-    row_index: int,
+    row_index: Annotated[int, Field(ge=0)],
 ) -> str:
     """Delete a row. Requires version hash from read_table.
 
@@ -267,7 +262,7 @@ def delete_row(
         rows: list[list[str]],
         columns: list[ColumnDescriptor],
     ) -> tuple[list[str], list[list[str]]]:
-        if row_index < 0 or row_index >= len(rows):
+        if row_index >= len(rows):
             msg = f"Row {row_index} out of range (0-{max(0, len(rows) - 1)})"
             raise ValueError(msg)
         rows.pop(row_index)
@@ -279,7 +274,7 @@ def delete_row(
 @mcp.tool(output_schema=None)
 def replace_table(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
     new_content: str,
 ) -> str:
@@ -312,3 +307,63 @@ def replace_table(
         return new_headers, new_rows
 
     return _safe_write(file_path, table_index, version, apply)
+
+
+@mcp.tool(output_schema=None)
+def create_table(
+    file_path: str,
+    content: str,
+    position: Annotated[int, Field(ge=-1)] = -1,
+    format: Literal["html", "pipe"] = "html",
+) -> str:
+    """Create a new table in a Markdown file. Provide content as a pipe table.
+
+    The table is written in the specified format: "html" (default, collapsed
+    single-line HTML suitable for GitBook) or "pipe" (GFM pipe table).
+
+    No version hash needed — this creates, not edits.
+
+    On success returns `v:{hash}` of the new table. Use this hash with
+    read_table and write tools to edit the table immediately.
+    On error returns JSON with "error" and "message" fields.
+
+    Args:
+        file_path: Absolute path to the Markdown file. Created if it doesn't exist.
+        content: Table in pipe format (header row + delimiter + data rows).
+            Example: "| Name | Age |\\n| --- | --- |\\n| Alice | 30 |"
+        position: 1-based line number to insert AFTER. -1 appends (default). 0 inserts at top.
+        format: "html" (default) or "pipe". HTML produces collapsed single-line
+            GitBook-compatible output. GitBook will auto-add width/data-* attributes on sync.
+    """
+    headers, rows = pipe_table_to_rows(content)
+    if not headers:
+        return _error("INVALID_CONTENT", "Could not parse content as a pipe table.")
+
+    if format == "html":
+        raw = rows_to_html(headers, rows, original_soup=None, gitbook_attrs=None)
+    else:
+        raw = rows_to_pipe_table(headers, rows)
+
+    path = Path(file_path)
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+
+    if position == -1 or not existing:
+        separator = (
+            "\n\n"
+            if existing and not existing.endswith("\n\n")
+            else ("\n" if existing and not existing.endswith("\n") else "")
+        )
+        new_file = existing + separator + raw + "\n"
+    elif position == 0:
+        new_file = raw + "\n\n" + existing
+    else:
+        lines = existing.split("\n")
+        if position > len(lines):
+            position = len(lines)
+        before = "\n".join(lines[:position])
+        after = "\n".join(lines[position:])
+        new_file = before + "\n\n" + raw + "\n\n" + after
+
+    _atomic_write(path, new_file)
+
+    return f"v:{compute_hash(raw)}"

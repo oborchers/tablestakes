@@ -123,12 +123,10 @@ class TestReadTable:
 
     async def test_negative_index(self, mixed_md: Path) -> None:
         async with Client(mcp) as client:
-            text = text_of(
+            with pytest.raises(Exception, match="greater than or equal to 0"):
                 await client.call_tool(
                     "read_table", {"file_path": str(mixed_md), "table_index": -1}
                 )
-            )
-            assert "TABLE_NOT_FOUND" in text
 
     async def test_column_descriptors_in_output(self, mixed_md: Path) -> None:
         async with Client(mcp) as client:

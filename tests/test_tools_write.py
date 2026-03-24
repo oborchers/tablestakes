@@ -287,6 +287,135 @@ class TestReplaceTable:
             assert "New" in content
 
 
+class TestCreateTable:
+    async def test_create_html_table(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n\nSome text.\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| Name | Age |\n| --- | --- |\n| Alice | 30 |",
+                    },
+                )
+            )
+            assert "v:" in text
+            content = f.read_text()
+            assert "<table>" in content
+            assert "<td>Alice</td>" in content
+            assert "Some text." in content
+
+    async def test_create_pipe_table(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| X | Y |\n| --- | --- |\n| 1 | 2 |",
+                        "format": "pipe",
+                    },
+                )
+            )
+            assert "v:" in text
+            content = f.read_text()
+            assert "| X | Y |" in content
+            assert "<table>" not in content
+
+    async def test_append_to_existing(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n\nParagraph one.\n\nParagraph two.\n")
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "create_table",
+                {
+                    "file_path": str(f),
+                    "content": "| A | B |\n| --- | --- |\n| 1 | 2 |",
+                },
+            )
+            content = f.read_text()
+            assert "Paragraph one." in content
+            assert "Paragraph two." in content
+            assert content.index("Paragraph two.") < content.index("<table>")
+
+    async def test_insert_at_position(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n\nBefore.\n\nAfter.\n")
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "create_table",
+                {
+                    "file_path": str(f),
+                    "content": "| A | B |\n| --- | --- |\n| 1 | 2 |",
+                    "position": 3,
+                },
+            )
+            content = f.read_text()
+            assert content.index("Before.") < content.index("<table>") < content.index("After.")
+
+    async def test_created_table_discoverable(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n")
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "create_table",
+                {
+                    "file_path": str(f),
+                    "content": "| Name | Age |\n| --- | --- |\n| Alice | 30 |",
+                },
+            )
+            list_text = text_of(await client.call_tool("list_tables", {"file_path": str(f)}))
+            assert "1 tables" in list_text
+            assert "Name" in list_text
+
+    async def test_create_in_new_file(self, tmp_path: Path) -> None:
+        f = tmp_path / "new.md"
+        assert not f.exists()
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| A | B |\n| --- | --- |\n| 1 | 2 |",
+                    },
+                )
+            )
+            assert "v:" in text
+            assert f.exists()
+            assert "<table>" in f.read_text()
+
+    async def test_invalid_content(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n")
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {"file_path": str(f), "content": "not a table"},
+                )
+            )
+            assert json.loads(text)["error"] == "INVALID_CONTENT"
+
+    async def test_invalid_format(self, tmp_path: Path) -> None:
+        f = tmp_path / "doc.md"
+        f.write_text("# Doc\n")
+        async with Client(mcp) as client:
+            with pytest.raises(Exception, match="'html' or 'pipe'"):
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| A |\n| --- |\n| 1 |",
+                        "format": "xml",
+                    },
+                )
+
+
 class TestToolRegistration:
     async def test_write_tools_registered(self) -> None:
         async with Client(mcp) as client:
@@ -296,3 +425,4 @@ class TestToolRegistration:
             assert "insert_row" in names
             assert "delete_row" in names
             assert "replace_table" in names
+            assert "create_table" in names

@@ -19,6 +19,8 @@ On STALE_READ error: table was modified since your read. Call read_table again, 
 get fresh version, retry.
 Write tools return only "v:{new_hash}" on success — call read_table to see \
 updated content.
+To create a NEW table: use create_table(file_path, content, format="html"). \
+Provide content as a pipe table — the server converts to HTML. No version needed.
 Columns: use letter (A), name (Priority), or composite (B:Priority).
 Row indices are 0-based, header row excluded.
 """,

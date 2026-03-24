@@ -58,19 +58,46 @@ v:5749c94ffb1f
 
 ## Token Efficiency
 
-Output is optimized for LLM context windows. Measured against a real 26-table document:
+Baseline: Claude Code's built-in Read + Edit tools operating on the same file. Measured on a synthetic 18-row, 4-column table with realistic requirement-style content (bold IDs, inline emphasis, mixed-length cells).
 
-| Operation | Naive approach | tablestakes | Savings |
+| Operation | Read + Edit | tablestakes | Savings |
 |---|---|---|---|
-| `list_tables` (26 tables) | ~4,900 tokens | ~2,600 tokens | **45%** |
-| `read_table` (18-row table) | ~1,500 tokens | ~1,500 tokens | — |
-| Any write operation | ~1,500 tokens | ~4 tokens | **99.8%** |
-| **10-edit workflow** | **~16,500 tokens** | **~1,550 tokens** | **91%** |
+| `list_tables` (26 HTML tables) | ~28,400 tokens | ~2,500 tokens | **91%** |
+| `read_table` (18-row HTML) | ~1,100 tokens | ~690 tokens | **39%** |
+| `read_table` (18-row GFM) | ~780 tokens | ~690 tokens | 11% |
+| Cell edit (18-row HTML) | ~35 tokens | ~27 tokens | **23%** |
+| Cell edit (18-row GFM) | ~99 tokens | ~27 tokens | **73%** |
+| **10-edit workflow (HTML)** | **~1,470 tokens** | **~960 tokens** | **35%** |
 
-Key optimizations:
-- **Write tools return only `v:{hash}`** (4 tokens) instead of echoing the full table (~1,500 tokens). The LLM already has the table from `read_table`.
+Where the savings come from:
+- **Read (HTML)**: collapsed HTML tags (`<td>`, `<tr>`, `<th>`, `<strong>`, `width="..."`) are pure overhead. Pipe tables carry the same information without markup. The Read tool also adds `cat -n` line-number prefixes.
+- **Read (GFM)**: modest savings from stripping line-number prefixes and surrounding document context. The table content itself is already clean.
+- **Write**: the Edit tool requires `old_string` (enough context to be unique in the file) + `new_string` (the modified version), both generated as output tokens. For GFM, `old_string` is the entire row line (~190 chars). tablestakes needs only `{"row": 0, "column": "B", "value": "Should"}` (~18 tokens).
+- **Discovery**: without tablestakes, the LLM reads the entire file to find tables. `list_tables` returns a compact index — metadata + 1 preview row per table.
+
 - **Compact pipe tables** with no column padding. Per the [ImprovingAgents benchmark](https://improvingagents.com), GFM pipe tables achieve the best token-to-accuracy ratio: 1.24x CSV cost at 51.9% QA accuracy, beating JSON (2.08x, 52.3%) and YAML (1.88x, 54.7%).
-- **No `structuredContent` duplication** — `output_schema=None` on all tools prevents FastMCP from sending the response twice.
+
+<details>
+<summary><strong>Experiment details</strong></summary>
+
+Tokenizer: tiktoken `cl100k_base` (GPT-4). Claude uses a different tokenizer, but relative comparisons hold. The benchmark script (`script.py`) constructs tables programmatically and generates tablestakes output using the actual converter code — no hardcoded strings.
+
+**Read baseline**: `simulate_read_tool()` wraps file content in `cat -n` format (line-number prefix per line), matching what Claude Code's Read tool returns. The full file (document text + table) enters the LLM context.
+
+**Write baseline**: for each cell edit, the script computes the minimum unique `old_string` by expanding leftward from the target `<td>` until the substring is unique in the file. `new_string` is the same context with the cell value replaced. This is a best-case scenario for the Edit tool — a human might include more context than the minimum.
+
+**list_tables baseline**: 26 copies of an 18-row GitBook HTML table in a markdown document. Naive = Read the full file (~28k tokens). tablestakes = `list_tables` output with `preview_rows=0..3`:
+
+| `preview_rows` | Tokens | Savings |
+|---|---|---|
+| 0 (metadata only) | ~1,230 | 96% |
+| 1 (default) | ~2,530 | 91% |
+| 2 | ~3,510 | 88% |
+| 3 | ~4,420 | 84% |
+
+Reproduce: `uv run --with tiktoken python scripts/script.py`
+
+</details>
 
 ## Quick Start
 
@@ -134,10 +161,11 @@ Add the following JSON to your client's MCP config file:
 | `update_cells(file_path, table_index, version, updates)` | Batch `{row, column, value}` patches |
 | `insert_row(file_path, table_index, version, position, values)` | Insert row at position (-1 to append) |
 | `delete_row(file_path, table_index, version, row_index)` | Remove row by index |
-| `add_column(file_path, table_index, version, name, ...)` | Add column with default value |
+| `insert_column(file_path, table_index, version, name, ...)` | Insert column with default value |
 | `delete_column(file_path, table_index, version, column)` | Remove column |
 | `rename_column(file_path, table_index, version, old_name, new_name)` | Rename header |
 | `replace_table(file_path, table_index, version, new_content)` | Full table replacement from pipe input |
+| `create_table(file_path, content, position, format)` | Create new table from pipe input (default: HTML) |
 
 All write tools require a `version` hash from `read_table` — optimistic concurrency that prevents stale overwrites without locks.
 

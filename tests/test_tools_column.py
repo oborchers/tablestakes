@@ -21,13 +21,13 @@ def pipe_md(tmp_path: Path) -> Path:
     return f
 
 
-class TestAddColumn:
+class TestInsertColumn:
     async def test_append_column(self, pipe_md: Path) -> None:
         async with Client(mcp) as client:
             v = await read_version(client, str(pipe_md))
             text = text_of(
                 await client.call_tool(
-                    "add_column",
+                    "insert_column",
                     {
                         "file_path": str(pipe_md),
                         "table_index": 0,
@@ -46,7 +46,7 @@ class TestAddColumn:
         async with Client(mcp) as client:
             v = await read_version(client, str(pipe_md))
             await client.call_tool(
-                "add_column",
+                "insert_column",
                 {
                     "file_path": str(pipe_md),
                     "table_index": 0,
@@ -62,7 +62,7 @@ class TestAddColumn:
         async with Client(mcp) as client:
             v = await read_version(client, str(pipe_md))
             await client.call_tool(
-                "add_column",
+                "insert_column",
                 {
                     "file_path": str(pipe_md),
                     "table_index": 0,
@@ -184,6 +184,6 @@ class TestToolRegistration:
         async with Client(mcp) as client:
             tools = await client.list_tools()
             names = [t.name for t in tools]
-            assert "add_column" in names
+            assert "insert_column" in names
             assert "delete_column" in names
             assert "rename_column" in names

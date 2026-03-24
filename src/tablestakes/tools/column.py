@@ -1,11 +1,13 @@
-"""Column MCP tools: add_column, delete_column, rename_column.
+"""Column MCP tools: insert_column, delete_column, rename_column.
 
 All use _safe_write from write.py for the shifted-lines safety model.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 from tablestakes.converter import resolve_column
 from tablestakes.server import mcp
@@ -16,15 +18,15 @@ if TYPE_CHECKING:
 
 
 @mcp.tool(output_schema=None)
-def add_column(
+def insert_column(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
-    name: str,
+    name: Annotated[str, Field(min_length=1)],
     default_value: str = "",
-    position: int = -1,
+    position: Annotated[int, Field(ge=-1)] = -1,
 ) -> str:
-    """Add a new column. Requires version hash from read_table.
+    """Insert a new column. Requires version hash from read_table.
 
     All existing rows are populated with default_value (empty string if omitted).
 
@@ -47,14 +49,7 @@ def add_column(
         columns: list[ColumnDescriptor],
     ) -> tuple[list[str], list[list[str]]]:
         col_count = len(headers)
-
-        if position == -1 or position >= col_count:
-            insert_at = col_count
-        elif position < 0:
-            msg = f"Position {position} invalid. Use -1 to append."
-            raise ValueError(msg)
-        else:
-            insert_at = position
+        insert_at = col_count if position == -1 or position >= col_count else position
 
         headers.insert(insert_at, name)
         for row in rows:
@@ -71,7 +66,7 @@ def add_column(
 @mcp.tool(output_schema=None)
 def delete_column(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
     column: str,
 ) -> str:
@@ -106,10 +101,10 @@ def delete_column(
 @mcp.tool(output_schema=None)
 def rename_column(
     file_path: str,
-    table_index: int,
+    table_index: Annotated[int, Field(ge=0)],
     version: str,
     old_name: str,
-    new_name: str,
+    new_name: Annotated[str, Field(min_length=1)],
 ) -> str:
     """Rename a column header. Row data is unchanged. Requires version from read_table.
 

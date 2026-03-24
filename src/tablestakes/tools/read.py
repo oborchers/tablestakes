@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated
+
+from pydantic import Field
 
 from tablestakes.converter import (
     html_to_rows,
@@ -17,7 +20,7 @@ from tablestakes.server import mcp
 
 
 @mcp.tool(output_schema=None)
-def list_tables(file_path: str, preview_rows: int = 1) -> str:
+def list_tables(file_path: str, preview_rows: Annotated[int, Field(ge=0)] = 1) -> str:
     """List all tables in a Markdown file. Call this FIRST to discover tables.
 
     Output format per table:
@@ -79,7 +82,7 @@ def list_tables(file_path: str, preview_rows: int = 1) -> str:
 
 
 @mcp.tool(output_schema=None)
-def read_table(file_path: str, table_index: int) -> str:
+def read_table(file_path: str, table_index: Annotated[int, Field(ge=0)]) -> str:
     """Read a full table and get the version hash required for writes.
 
     Workflow: list_tables → read_table → write tool (update_cells, etc.)
@@ -105,7 +108,7 @@ def read_table(file_path: str, table_index: int) -> str:
 
     tables = detect_tables(content)
 
-    if table_index < 0 or table_index >= len(tables):
+    if table_index >= len(tables):
         return f"TABLE_NOT_FOUND: index {table_index} out of range. {len(tables)} table(s) in file."
 
     table = tables[table_index]
