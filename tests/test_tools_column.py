@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 from typing import TYPE_CHECKING
 
 import pytest
@@ -177,6 +179,99 @@ class TestRenameColumn:
             content = gitbook_md.read_text()
             assert 'width="395.0811767578125"' in content
             assert "Req" in content
+
+
+class TestDeleteLastColumn:
+    """Bug B: deleting the only column must be rejected."""
+
+    async def test_delete_last_column_rejected(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Solo |\n| --- |\n| one |\n| two |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "delete_column",
+                    {
+                        "file_path": str(f),
+                        "table_index": 0,
+                        "version": v,
+                        "column": "A",
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "EDIT_ERROR"
+            assert "last remaining" in json.loads(text)["message"].lower()
+
+    async def test_delete_second_to_last_succeeds(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| A | B |\n| --- | --- |\n| 1 | 2 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "delete_column",
+                    {
+                        "file_path": str(f),
+                        "table_index": 0,
+                        "version": v,
+                        "column": "B",
+                    },
+                )
+            )
+            assert "v:" in text
+
+
+class TestRenameColumnWithPipe:
+    """Bug A: pipe characters in column names must be escaped."""
+
+    async def test_rename_to_name_with_pipe(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| X | Y |\n| --- | --- |\n| 1 | 2 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "rename_column",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "old_name": "X",
+                    "new_name": "Col|X",
+                },
+            )
+            result = text_of(
+                await client.call_tool(
+                    "read_table", {"file_path": str(f), "table_index": 0}
+                )
+            )
+            assert "2c" in result
+
+
+class TestInsertColumnGitBookAttrs:
+    """Bug E: GitBook attributes must follow column content, not position."""
+
+    async def test_insert_column_attrs_follow_content(self, gitbook_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(gitbook_md))
+            original = gitbook_md.read_text()
+            first_width = 'width="' in original
+
+            await client.call_tool(
+                "insert_column",
+                {
+                    "file_path": str(gitbook_md),
+                    "table_index": 0,
+                    "version": v,
+                    "name": "NewCol",
+                    "position": 0,
+                },
+            )
+            content = gitbook_md.read_text()
+            ths = re.findall(r"<th([^>]*)>([^<]*)</th>", content)
+            if ths:
+                new_col_attrs = ths[0][0]
+                assert "width=" not in new_col_attrs or not first_width
 
 
 class TestToolRegistration:

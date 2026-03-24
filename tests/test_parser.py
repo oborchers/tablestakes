@@ -203,3 +203,28 @@ class TestEmptyAndEdgeCases:
         # Has 4 columns: Requirement, Priority, Dependency, Priority 1-2-3
         headers = t.soup.find("thead").find_all(["th", "td"])
         assert len(headers) == 4
+
+
+# ---------------------------------------------------------------------------
+# Nested table filtering (Bug D)
+# ---------------------------------------------------------------------------
+
+
+class TestNestedTableFiltering:
+    def test_html_inside_pipe_cell_not_detected(self) -> None:
+        """A <table> tag inside a pipe cell must not create a phantom entry."""
+        content = (
+            "| Name | Data |\n"
+            "| --- | --- |\n"
+            "| Alice | <table><tr><td>nested</td></tr></table> |\n"
+        )
+        tables = detect_tables(content)
+        assert len(tables) == 1
+
+    def test_real_html_and_pipe_both_detected(self) -> None:
+        content = (
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n\n"
+            "<table><tr><td>real</td></tr></table>\n"
+        )
+        tables = detect_tables(content)
+        assert len(tables) == 2

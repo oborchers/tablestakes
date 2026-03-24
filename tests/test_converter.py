@@ -8,9 +8,12 @@ import pytest
 from bs4 import Tag
 
 from tablestakes.converter import (
+    _escape_pipe_cell,
+    _unescape_pipe_cell,
     cell_html_to_markdown,
     html_to_rows,
     markdown_to_cell_html,
+    parse_alignment,
     pipe_table_to_rows,
     resolve_column,
     rows_to_html,
@@ -356,3 +359,96 @@ class TestRoundTrip:
         h2, r2 = pipe_table_to_rows(regenerated)
         assert h1 == h2
         assert r1 == r2
+
+
+# ---------------------------------------------------------------------------
+# Pipe-table escaping (Bug A)
+# ---------------------------------------------------------------------------
+
+
+class TestPipeCellEscaping:
+    def test_escape_pipe(self) -> None:
+        assert _escape_pipe_cell("a|b") == "a\\|b"
+
+    def test_escape_backslash(self) -> None:
+        assert _escape_pipe_cell("a\\b") == "a\\\\b"
+
+    def test_escape_newline(self) -> None:
+        assert _escape_pipe_cell("line1\nline2") == "line1<br>line2"
+
+    def test_escape_backslash_pipe(self) -> None:
+        assert _escape_pipe_cell("a\\|b") == "a\\\\\\|b"
+
+    def test_round_trip(self) -> None:
+        original = "has|pipe and \\backslash"
+        assert _unescape_pipe_cell(_escape_pipe_cell(original)) == original
+
+    def test_pipe_in_cell_survives_table_round_trip(self) -> None:
+        headers = ["Name", "Notes"]
+        rows = [["Alice", "a|b|c"], ["Bob", "ok"]]
+        parsed_h, parsed_r = pipe_table_to_rows(rows_to_pipe_table(headers, rows))
+        assert parsed_h == headers
+        assert parsed_r == rows
+
+    def test_backslash_in_cell_survives_table_round_trip(self) -> None:
+        headers = ["Path"]
+        rows = [["C:\\Users\\test"], ["back\\slash"]]
+        _, parsed_r = pipe_table_to_rows(rows_to_pipe_table(headers, rows))
+        assert parsed_r[0] == ["C:\\Users\\test"]
+
+    def test_newline_in_cell_becomes_br(self) -> None:
+        headers = ["Content"]
+        rows = [["line1\nline2"]]
+        table_str = rows_to_pipe_table(headers, rows)
+        assert "\\n" not in table_str
+        assert "<br>" in table_str
+
+    def test_pipe_in_header_survives_table_round_trip(self) -> None:
+        headers = ["Col|A", "Col|B"]
+        rows = [["1", "2"]]
+        parsed_h, _ = pipe_table_to_rows(rows_to_pipe_table(headers, rows))
+        assert parsed_h == headers
+
+
+# ---------------------------------------------------------------------------
+# Alignment markers (Bug C)
+# ---------------------------------------------------------------------------
+
+
+class TestAlignment:
+    def test_parse_alignment(self) -> None:
+        content = "| L | C | R | N |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |"
+        assert parse_alignment(content) == ["left", "center", "right", "none"]
+
+    def test_alignment_preserved_in_round_trip(self) -> None:
+        alignments = ["left", "center", "right", "none"]
+        table_str = rows_to_pipe_table(["L", "C", "R", "N"], [["a", "b", "c", "d"]], alignments=alignments)
+        assert ":---" in table_str
+        assert ":---:" in table_str
+        assert "---:" in table_str
+
+
+# ---------------------------------------------------------------------------
+# Numeric column names (Bug J)
+# ---------------------------------------------------------------------------
+
+
+class TestNumericColumnNames:
+    def test_numeric_name_resolved_by_name(self) -> None:
+        columns = [
+            ColumnDescriptor.from_header(0, "1"),
+            ColumnDescriptor.from_header(1, "2"),
+            ColumnDescriptor.from_header(2, "3"),
+        ]
+        assert resolve_column("1", columns) == 0
+        assert resolve_column("2", columns) == 1
+        assert resolve_column("3", columns) == 2
+
+    def test_numeric_fallback_when_no_name_match(self) -> None:
+        columns = [
+            ColumnDescriptor.from_header(0, "Name"),
+            ColumnDescriptor.from_header(1, "Age"),
+            ColumnDescriptor.from_header(2, "City"),
+        ]
+        assert resolve_column("0", columns) == 0
+        assert resolve_column("1", columns) == 1

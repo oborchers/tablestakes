@@ -416,6 +416,349 @@ class TestCreateTable:
                 )
 
 
+class TestPipeEscapingViaTools:
+    """Bug A: pipes, backslashes, and pre-existing escapes in cell values."""
+
+    async def test_update_cells_with_pipe_value(self, pipe_md: Path) -> None:
+        async with Client(mcp) as client:
+            v = await read_version(client, str(pipe_md))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(pipe_md),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "City", "value": "has|pipe"}],
+                },
+            )
+            result = text_of(
+                await client.call_tool(
+                    "read_table", {"file_path": str(pipe_md), "table_index": 0}
+                )
+            )
+            assert "has\\|pipe" in result
+            assert "3c" in result
+
+    async def test_existing_escaped_pipes_survive_edit(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Name | Notes |\n| --- | --- |\n| Alice\\|Bob | ok |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "Notes", "value": "edited"}],
+                },
+            )
+            result = text_of(
+                await client.call_tool(
+                    "read_table", {"file_path": str(f), "table_index": 0}
+                )
+            )
+            assert "Alice\\|Bob" in result
+            assert "2c" in result
+
+
+class TestAlignmentViaTools:
+    """Bug C: alignment markers must survive edits."""
+
+    async def test_alignment_preserved_through_update_cells(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| Name | Age |\n| :--- | ---: |\n| Alice | 30 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "Age", "value": "31"}],
+                },
+            )
+            content = f.read_text()
+            assert ":---" in content
+            assert "---:" in content
+
+    async def test_alignment_from_replace_table(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| X |\n| --- |\n| 1 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "replace_table",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "new_content": "| A | B |\n| :---: | ---: |\n| 1 | 2 |",
+                },
+            )
+            content = f.read_text()
+            assert ":---:" in content
+            assert "---:" in content
+
+    async def test_alignment_from_create_table(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("# Doc\n")
+        async with Client(mcp) as client:
+            await client.call_tool(
+                "create_table",
+                {
+                    "file_path": str(f),
+                    "content": "| L | R |\n| :--- | ---: |\n| a | b |",
+                    "format": "pipe",
+                },
+            )
+            content = f.read_text()
+            assert ":---" in content
+            assert "---:" in content
+
+
+class TestCreateTablePositionGuard:
+    """Bug F: create_table must not split existing tables."""
+
+    async def test_position_inside_table_rejected(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "# Test\n\n"
+            "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n"
+            "\nEnd.\n"
+        )
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| X |\n| --- |\n| new |",
+                        "position": 4,
+                    },
+                )
+            )
+            assert json.loads(text)["error"] == "POSITION_INSIDE_TABLE"
+
+    async def test_position_between_tables_ok(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "| A |\n| --- |\n| 1 |\n\nSeparator\n\n| B |\n| --- |\n| 2 |\n"
+        )
+        async with Client(mcp) as client:
+            text = text_of(
+                await client.call_tool(
+                    "create_table",
+                    {
+                        "file_path": str(f),
+                        "content": "| X |\n| --- |\n| new |",
+                        "format": "pipe",
+                        "position": 4,
+                    },
+                )
+            )
+            assert "v:" in text
+
+
+class TestHeaderlessHtml:
+    """Bug G: editing header-less HTML tables must not inject <thead>."""
+
+    async def test_tbody_no_thead_preserved(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "# Test\n\n"
+            "<table><tbody>"
+            "<tr><td>Alice</td><td>100</td></tr>"
+            "<tr><td>Bob</td><td>200</td></tr>"
+            "</tbody></table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "B", "value": "999"}],
+                },
+            )
+            content = f.read_text()
+            assert "<thead>" not in content
+            assert "999" in content
+            assert "Alice" in content
+
+    async def test_no_tbody_no_thead_preserved(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "# Test\n\n"
+            "<table>"
+            "<tr><td>Alice</td><td>100</td></tr>"
+            "<tr><td>Bob</td><td>200</td></tr>"
+            "</table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "B", "value": "999"}],
+                },
+            )
+            content = f.read_text()
+            assert "<thead>" not in content
+            assert "999" in content
+
+
+class TestBomHandling:
+    """Bug H: UTF-8 BOM must not corrupt write offsets."""
+
+    async def test_bom_file_edit_correct(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_bytes(
+            "\ufeff# Test\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n".encode()
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(f),
+                        "table_index": 0,
+                        "version": v,
+                        "updates": [{"row": 0, "column": "Age", "value": "31"}],
+                    },
+                )
+            )
+            assert "v:" in text
+            content = f.read_text(encoding="utf-8")
+            assert "31" in content
+            raw = f.read_bytes()
+            assert raw.startswith(b"\xef\xbb\xbf")
+
+
+class TestHtmlElementRoundTrip:
+    """Bug I: <img>, <del>, <sub>, <sup> must survive edits."""
+
+    async def test_img_survives(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "<table><thead><tr><th>Name</th><th>Photo</th></tr></thead>"
+            '<tbody><tr><td>Alice</td><td><img src="a.png" alt="pic"/></td></tr>'
+            "</tbody></table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "Name", "value": "Bob"}],
+                },
+            )
+            content = f.read_text()
+            assert "<img" in content
+            assert "a.png" in content
+
+    async def test_del_survives(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "<table><thead><tr><th>A</th><th>B</th></tr></thead>"
+            "<tbody><tr><td><del>removed</del></td><td>keep</td></tr>"
+            "</tbody></table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "B", "value": "edited"}],
+                },
+            )
+            content = f.read_text()
+            assert "<del>" in content
+
+    async def test_sub_survives(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "<table><thead><tr><th>Formula</th><th>Name</th></tr></thead>"
+            "<tbody><tr><td>H<sub>2</sub>O</td><td>Water</td></tr>"
+            "</tbody></table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "Name", "value": "Agua"}],
+                },
+            )
+            content = f.read_text()
+            assert "<sub>" in content
+
+    async def test_sup_survives(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text(
+            "<table><thead><tr><th>Note</th><th>Val</th></tr></thead>"
+            "<tbody><tr><td>x<sup>2</sup></td><td>4</td></tr>"
+            "</tbody></table>\n"
+        )
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            await client.call_tool(
+                "update_cells",
+                {
+                    "file_path": str(f),
+                    "table_index": 0,
+                    "version": v,
+                    "updates": [{"row": 0, "column": "Val", "value": "9"}],
+                },
+            )
+            content = f.read_text()
+            assert "<sup>" in content
+
+
+class TestNumericColumnNamesViaTool:
+    """Bug J: columns named "2024" must be reachable by name."""
+
+    async def test_update_cells_with_numeric_column_name(self, tmp_path: Path) -> None:
+        f = tmp_path / "test.md"
+        f.write_text("| 2024 | 2025 |\n| --- | --- |\n| 100 | 200 |\n")
+        async with Client(mcp) as client:
+            v = await read_version(client, str(f))
+            text = text_of(
+                await client.call_tool(
+                    "update_cells",
+                    {
+                        "file_path": str(f),
+                        "table_index": 0,
+                        "version": v,
+                        "updates": [{"row": 0, "column": "2024", "value": "150"}],
+                    },
+                )
+            )
+            assert "v:" in text
+            result = text_of(
+                await client.call_tool(
+                    "read_table", {"file_path": str(f), "table_index": 0}
+                )
+            )
+            assert "150" in result
+
+
 class TestToolRegistration:
     async def test_write_tools_registered(self) -> None:
         async with Client(mcp) as client:

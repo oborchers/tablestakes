@@ -330,13 +330,28 @@ def _update_existing_html(
         _update_header_cells(soup, headers)
         _update_data_cells(soup, rows)
     else:
-        # Header-less table: first <tr> was consumed as headers on read.
-        expected = len(rows) + 1  # +1 for the pseudo-header row
-        if expected != _count_data_rows(soup):
-            return _build_fresh_html(
-                headers, rows, gitbook_attrs, original_headers, has_thead=False
-            )
-        _update_headerless_cells(soup, headers, rows)
+        # Header-less table — two sub-cases depending on <tbody> presence.
+        tbody = soup.find("tbody")
+        has_tbody = tbody is not None and isinstance(tbody, Tag)
+
+        if has_tbody:
+            # Sub-case 2: <tbody> present, no <thead>.
+            # html_to_rows did NOT consume any row as header — all rows
+            # are in `rows`, headers are synthetic ("A", "B", …).
+            if len(rows) != _count_data_rows(soup):
+                return _build_fresh_html(
+                    headers, rows, gitbook_attrs, original_headers, has_thead=False
+                )
+            _update_data_cells(soup, rows)
+        else:
+            # Sub-case 1: no <tbody>, no <thead>.
+            # html_to_rows consumed first <tr> as headers.
+            expected = len(rows) + 1  # +1 for the pseudo-header row
+            if expected != _count_data_rows(soup):
+                return _build_fresh_html(
+                    headers, rows, gitbook_attrs, original_headers, has_thead=False
+                )
+            _update_headerless_cells(soup, headers, rows)
 
     return serialize_html_collapsed(soup)
 
@@ -425,6 +440,21 @@ def _remap_header_attrs(
     return new_attrs
 
 
+def _headers_are_synthetic(headers: list[str]) -> bool:
+    """Check if headers are auto-generated letter names ("A", "B", …)."""
+    return all(h == index_to_letter(i) for i, h in enumerate(headers))
+
+
+def _build_data_tr(cells: list[str], col_count: int) -> str:
+    """Build a single ``<tr>`` of ``<td>`` elements."""
+    parts = ["<tr>"]
+    for col_idx in range(col_count):
+        val = cells[col_idx] if col_idx < len(cells) else ""
+        parts.append(f"<td>{markdown_to_cell_html(val)}</td>")
+    parts.append("</tr>")
+    return "".join(parts)
+
+
 def _build_fresh_html(
     headers: list[str],
     rows: list[list[str]],
@@ -473,22 +503,13 @@ def _build_fresh_html(
     # Tbody
     parts.append("<tbody>")
 
-    # When no thead, write headers as the first data row
-    if not has_thead:
-        parts.append("<tr>")
-        for col_idx in range(col_count):
-            val = headers[col_idx] if col_idx < len(headers) else ""
-            content = markdown_to_cell_html(val)
-            parts.append(f"<td>{content}</td>")
-        parts.append("</tr>")
+    # When no thead, write headers as the first data row — but only if they
+    # contain real content (sub-case 1: no tbody, first <tr> was header).
+    # Skip if synthetic ("A", "B", …) from sub-case 2 (has tbody, no thead).
+    if not has_thead and not _headers_are_synthetic(headers):
+        parts.append(_build_data_tr(headers, col_count))
 
-    for row in rows:
-        parts.append("<tr>")
-        for col_idx in range(col_count):
-            val = row[col_idx] if col_idx < len(row) else ""
-            content = markdown_to_cell_html(val)
-            parts.append(f"<td>{content}</td>")
-        parts.append("</tr>")
+    parts.extend(_build_data_tr(row, col_count) for row in rows)
     parts.append("</tbody></table>")
 
     return "".join(parts)
