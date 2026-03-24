@@ -422,7 +422,9 @@ class TestAlignment:
 
     def test_alignment_preserved_in_round_trip(self) -> None:
         alignments = ["left", "center", "right", "none"]
-        table_str = rows_to_pipe_table(["L", "C", "R", "N"], [["a", "b", "c", "d"]], alignments=alignments)
+        table_str = rows_to_pipe_table(
+            ["L", "C", "R", "N"], [["a", "b", "c", "d"]], alignments=alignments
+        )
         assert ":---" in table_str
         assert ":---:" in table_str
         assert "---:" in table_str

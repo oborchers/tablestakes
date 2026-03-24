@@ -91,9 +91,7 @@ def _remove_nested_tables(tables: list[RawTable]) -> list[RawTable]:
         t
         for t in tables
         if not any(
-            o.start_offset <= t.start_offset
-            and t.end_offset <= o.end_offset
-            and o is not t
+            o.start_offset <= t.start_offset and t.end_offset <= o.end_offset and o is not t
             for o in tables
         )
     ]

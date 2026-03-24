@@ -305,9 +305,7 @@ def rows_to_html(
             attributes by column name when structure changes.
     """
     if original_soup is not None:
-        return _update_existing_html(
-            headers, rows, original_soup, gitbook_attrs, original_headers
-        )
+        return _update_existing_html(headers, rows, original_soup, gitbook_attrs, original_headers)
     return _build_fresh_html(headers, rows, gitbook_attrs, original_headers)
 
 
@@ -324,9 +322,7 @@ def _update_existing_html(
 
     if has_thead:
         if len(headers) != _count_header_cells(soup) or len(rows) != _count_data_rows(soup):
-            return _build_fresh_html(
-                headers, rows, gitbook_attrs, original_headers, has_thead=True
-            )
+            return _build_fresh_html(headers, rows, gitbook_attrs, original_headers, has_thead=True)
         _update_header_cells(soup, headers)
         _update_data_cells(soup, rows)
     else:
@@ -356,9 +352,7 @@ def _update_existing_html(
     return serialize_html_collapsed(soup)
 
 
-def _update_headerless_cells(
-    soup: Tag, headers: list[str], rows: list[list[str]]
-) -> None:
+def _update_headerless_cells(soup: Tag, headers: list[str], rows: list[list[str]]) -> None:
     """Update cells in a header-less HTML table (no ``<thead>``)."""
     tbody = soup.find("tbody")
     container = tbody if tbody and isinstance(tbody, Tag) else soup

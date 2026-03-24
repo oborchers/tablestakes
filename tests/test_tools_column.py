@@ -241,9 +241,7 @@ class TestRenameColumnWithPipe:
                 },
             )
             result = text_of(
-                await client.call_tool(
-                    "read_table", {"file_path": str(f), "table_index": 0}
-                )
+                await client.call_tool("read_table", {"file_path": str(f), "table_index": 0})
             )
             assert "2c" in result
 

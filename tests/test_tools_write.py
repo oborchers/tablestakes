@@ -432,9 +432,7 @@ class TestPipeEscapingViaTools:
                 },
             )
             result = text_of(
-                await client.call_tool(
-                    "read_table", {"file_path": str(pipe_md), "table_index": 0}
-                )
+                await client.call_tool("read_table", {"file_path": str(pipe_md), "table_index": 0})
             )
             assert "has\\|pipe" in result
             assert "3c" in result
@@ -454,9 +452,7 @@ class TestPipeEscapingViaTools:
                 },
             )
             result = text_of(
-                await client.call_tool(
-                    "read_table", {"file_path": str(f), "table_index": 0}
-                )
+                await client.call_tool("read_table", {"file_path": str(f), "table_index": 0})
             )
             assert "Alice\\|Bob" in result
             assert "2c" in result
@@ -524,9 +520,7 @@ class TestCreateTablePositionGuard:
     async def test_position_inside_table_rejected(self, tmp_path: Path) -> None:
         f = tmp_path / "test.md"
         f.write_text(
-            "# Test\n\n"
-            "| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n"
-            "\nEnd.\n"
+            "# Test\n\n| A | B |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n| 5 | 6 |\n\nEnd.\n"
         )
         async with Client(mcp) as client:
             text = text_of(
@@ -543,9 +537,7 @@ class TestCreateTablePositionGuard:
 
     async def test_position_between_tables_ok(self, tmp_path: Path) -> None:
         f = tmp_path / "test.md"
-        f.write_text(
-            "| A |\n| --- |\n| 1 |\n\nSeparator\n\n| B |\n| --- |\n| 2 |\n"
-        )
+        f.write_text("| A |\n| --- |\n| 1 |\n\nSeparator\n\n| B |\n| --- |\n| 2 |\n")
         async with Client(mcp) as client:
             text = text_of(
                 await client.call_tool(
@@ -619,9 +611,7 @@ class TestBomHandling:
 
     async def test_bom_file_edit_correct(self, tmp_path: Path) -> None:
         f = tmp_path / "test.md"
-        f.write_bytes(
-            "\ufeff# Test\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n".encode()
-        )
+        f.write_bytes("\ufeff# Test\n\n| Name | Age |\n| --- | --- |\n| Alice | 30 |\n".encode())
         async with Client(mcp) as client:
             v = await read_version(client, str(f))
             text = text_of(
@@ -752,9 +742,7 @@ class TestNumericColumnNamesViaTool:
             )
             assert "v:" in text
             result = text_of(
-                await client.call_tool(
-                    "read_table", {"file_path": str(f), "table_index": 0}
-                )
+                await client.call_tool("read_table", {"file_path": str(f), "table_index": 0})
             )
             assert "150" in result
 
