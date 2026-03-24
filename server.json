@@ -6,12 +6,12 @@
     "url": "https://github.com/oborchers/tablestakes",
     "source": "github"
   },
-  "version": "0.1.2",
+  "version": "1.0.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "tablestakes",
-      "version": "0.1.2",
+      "version": "1.0.0",
       "transport": {
         "type": "stdio"
       },
