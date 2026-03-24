@@ -88,6 +88,9 @@ def delete_column(
         rows: list[list[str]],
         columns: list[ColumnDescriptor],
     ) -> tuple[list[str], list[list[str]]]:
+        if len(headers) <= 1:
+            msg = "Cannot delete the last remaining column."
+            raise ValueError(msg)
         col_idx = resolve_column(column, columns)
         headers.pop(col_idx)
         for row in rows:

@@ -17,6 +17,7 @@ from pydantic import Field
 
 from tablestakes.converter import (
     html_to_rows,
+    parse_alignment,
     pipe_table_to_rows,
     resolve_column,
     rows_to_html,
@@ -31,6 +32,13 @@ EditFn: TypeAlias = Callable[
     [RawTable, list[str], list[list[str]], list[ColumnDescriptor]],
     tuple[list[str], list[list[str]]],
 ]
+
+
+def _strip_bom(content: str) -> tuple[str, str]:
+    """Strip UTF-8 BOM if present, returning (stripped_content, bom_prefix)."""
+    if content.startswith("\ufeff"):
+        return content[1:], "\ufeff"
+    return content, ""
 
 
 def _atomic_write(path: Path, content: str) -> None:
@@ -67,7 +75,8 @@ def _safe_write(
     if not path.exists():
         return _error("FILE_NOT_FOUND", f"File not found: {file_path}")
 
-    content = path.read_text(encoding="utf-8")
+    raw_content = path.read_text(encoding="utf-8")
+    content, bom = _strip_bom(raw_content)
     tables = detect_tables(content)
 
     if table_index >= len(tables):
@@ -89,6 +98,7 @@ def _safe_write(
 
     # Parse current table into headers + rows
     headers, rows = _parse_table(table)
+    original_headers = list(headers)
 
     # Build column descriptors for column resolution
     columns = [ColumnDescriptor.from_header(i, h) for i, h in enumerate(headers)]
@@ -100,10 +110,10 @@ def _safe_write(
         return _error("EDIT_ERROR", str(e))
 
     # Serialize back to original format
-    new_raw = _serialize_table(table, new_headers, new_rows)
+    new_raw = _serialize_table(table, new_headers, new_rows, original_headers)
 
-    # Replace in file and write atomically
-    new_content = content[: table.start_offset] + new_raw + content[table.end_offset :]
+    # Replace in file and write atomically (preserve BOM if present)
+    new_content = bom + content[: table.start_offset] + new_raw + content[table.end_offset :]
     _atomic_write(path, new_content)
 
     return f"v:{compute_hash(new_raw)}"
@@ -118,15 +128,22 @@ def _parse_table(table: RawTable) -> tuple[list[str], list[list[str]]]:
     return [], []
 
 
-def _serialize_table(table: RawTable, headers: list[str], rows: list[list[str]]) -> str:
+def _serialize_table(
+    table: RawTable,
+    headers: list[str],
+    rows: list[list[str]],
+    original_headers: list[str] | None = None,
+) -> str:
     """Serialize headers + rows back to the table's original format."""
     if table.format == TableFormat.PIPE:
-        return rows_to_pipe_table(headers, rows)
+        alignments = parse_alignment(table.raw_content)
+        return rows_to_pipe_table(headers, rows, alignments=alignments)
     return rows_to_html(
         headers,
         rows,
         original_soup=table.soup,
         gitbook_attrs=table.gitbook_attrs,
+        original_headers=original_headers,
     )
 
 
@@ -304,6 +321,9 @@ def replace_table(
         if not new_headers:
             msg = "Could not parse new_content as a pipe table."
             raise ValueError(msg)
+        # Carry alignment markers from new_content into the serialization path
+        if table.format == TableFormat.PIPE:
+            table.raw_content = new_content
         return new_headers, new_rows
 
     return _safe_write(file_path, table_index, version, apply)
@@ -342,10 +362,12 @@ def create_table(
     if format == "html":
         raw = rows_to_html(headers, rows, original_soup=None, gitbook_attrs=None)
     else:
-        raw = rows_to_pipe_table(headers, rows)
+        alignments = parse_alignment(content)
+        raw = rows_to_pipe_table(headers, rows, alignments=alignments)
 
     path = Path(file_path)
-    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    raw_existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    existing, bom = _strip_bom(raw_existing)
 
     if position == -1 or not existing:
         separator = (
@@ -360,10 +382,23 @@ def create_table(
         lines = existing.split("\n")
         if position > len(lines):
             position = len(lines)
+
+        # Reject positions that fall inside an existing table
+        insert_offset = sum(len(lines[i]) + 1 for i in range(position))
+        for t in detect_tables(existing):
+            if t.start_offset < insert_offset < t.end_offset:
+                end_line = t.source_line + t.raw_content.count("\n")
+                return _error(
+                    "POSITION_INSIDE_TABLE",
+                    f"Position {position} falls inside table T{t.index} "
+                    f"(lines {t.source_line}-{end_line}). "
+                    f"Use a position before or after the table.",
+                )
+
         before = "\n".join(lines[:position])
         after = "\n".join(lines[position:])
         new_file = before + "\n\n" + raw + "\n\n" + after
 
-    _atomic_write(path, new_file)
+    _atomic_write(path, bom + new_file)
 
     return f"v:{compute_hash(raw)}"

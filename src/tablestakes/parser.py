@@ -58,8 +58,8 @@ def detect_tables(content: str) -> list[RawTable]:
     html_ranges = [(t.start_offset, t.end_offset) for t in html_tables]
     pipe_tables = _detect_pipe_tables(content, excluded, html_ranges)
 
-    # Merge and sort by position
-    all_tables = html_tables + pipe_tables
+    # Merge, remove nested tables, and sort by position
+    all_tables = _remove_nested_tables(html_tables + pipe_tables)
     all_tables.sort(key=lambda t: t.start_offset)
 
     # Assign sequential indices
@@ -79,6 +79,24 @@ def _detect_excluded_ranges(content: str) -> list[tuple[int, int]]:
 def _is_in_ranges(pos: int, ranges: list[tuple[int, int]]) -> bool:
     """Check if a position falls inside any of the given ranges."""
     return any(start <= pos < end for start, end in ranges)
+
+
+def _remove_nested_tables(tables: list[RawTable]) -> list[RawTable]:
+    """Remove tables whose range falls entirely inside another table.
+
+    Handles phantom ``<table>`` tags detected inside pipe table cells and
+    pipe-like text detected inside HTML table cells.
+    """
+    return [
+        t
+        for t in tables
+        if not any(
+            o.start_offset <= t.start_offset
+            and t.end_offset <= o.end_offset
+            and o is not t
+            for o in tables
+        )
+    ]
 
 
 def _offset_to_line(content: str, offset: int) -> int:
