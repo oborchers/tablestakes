@@ -39,7 +39,7 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.${{ matrix.python-version }}
       - if: matrix.python-version == '3.13'
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with: { files: coverage.xml }
 
   build:
