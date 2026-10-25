@@ -196,6 +196,10 @@ make test      # Run tests only
 make test-cov  # Tests with coverage report
 ```
 
+## Author
+
+Built by [Dr. Oliver Borchers](https://www.drborchers.com), Executive AI and Automation Partner and Head of AI Engineering at IU Group.
+
 ## License
 
 Apache-2.0
